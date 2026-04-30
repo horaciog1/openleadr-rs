@@ -347,8 +347,8 @@ impl AppState {
             .route("/auth/server", get(auth_server_handler))
             .route("/notifiers", get(subscription::notifier_get))
             .route("/nonrep/public-key", get(crate::nonrep_api::get_public_key))
-            .route("/nonrep/sessions/:ven_id/evidence", get(crate::nonrep_api::get_evidence))
-            .route("/nonrep/sessions/:ven_id/verify", axum::routing::post(crate::nonrep_api::verify_proof));
+            .route("/nonrep/sessions/{ven_id}/evidence", get(crate::nonrep_api::get_evidence))
+            .route("/nonrep/sessions/{ven_id}/verify", axum::routing::post(crate::nonrep_api::verify_proof));
         #[cfg(feature = "experimental-websockets")]
         {
             router = router.route("/notifiers/ws", get(subscription::notifier_websocket_get));
