@@ -450,11 +450,6 @@ impl FromRef<AppState> for Arc<dyn SubscriptionCrud> {
     }
 }
 
-impl FromRef<AppState> for Arc<NonRepManager> {
-    fn from_ref(state: &AppState) -> Arc<NonRepManager> {
-        state.nonrep.clone()
-    }
-}
 
 #[cfg(test)]
 mod test {

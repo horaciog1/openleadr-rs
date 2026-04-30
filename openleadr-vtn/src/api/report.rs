@@ -27,18 +27,17 @@ use crate::{
 
 /// Serialise the report to JSON bytes and record it in the VEN's non-rep chain.
 /// Reports are sent by the VEN, so is_generator = false.
-fn record_report_nonrep(nonrep: &NonRepManager, report: &Report, ven_id: Option<&str>) {
-    let ven_id = match ven_id.or_else(|| {
-        // Fall back to client_name if client_id not available
-        report.content.client_name.as_deref()
+fn record_report_nonrep(nonrep: &NonRepManager, report: &Report, ven_id: Option<String>) {
+    let ven_id = match ven_id.as_deref().or_else(|| {
+        Some(report.content.client_name.as_str())
     }) {
-        Some(id) => id,
+        Some(id) => id.to_string(),
         None => {
             tracing::warn!("nonrep: cannot record report — no ven_id available");
             return;
         }
     };
- 
+
     let payload = match serde_json::to_vec(report) {
         Ok(p) => p,
         Err(e) => {
@@ -46,8 +45,8 @@ fn record_report_nonrep(nonrep: &NonRepManager, report: &Report, ven_id: Option<
             return;
         }
     };
- 
-    nonrep.record_message(ven_id, &payload, false);  // false = VEN is generator
+
+    nonrep.record_message(&ven_id, &payload, false);
 }
 
 #[instrument(skip(user, report_source))]
@@ -116,8 +115,8 @@ pub async fn add(
     info!(%report.id, report_name=?report.content.report_name, client_id = user.sub, "report created");
  
     // Record into the submitting VEN's non-rep chain (VEN is generator)
-    record_report_nonrep(&nonrep, &report, user.client_id().ok().as_deref()); // <-- ADDED
- 
+    record_report_nonrep(&nonrep, &report, user.client_id().ok().map(|id| id.to_string()));
+
     subscription::notify(
         &*event_source,
         &notifier_state,
@@ -150,7 +149,7 @@ pub async fn edit(
     info!(%report.id, report_name=?report.content.report_name, client_id = user.sub, "report updated");
  
     // Record into the submitting VEN's non-rep chain
-    record_report_nonrep(&nonrep, &report, user.client_id().ok().as_deref()); // <-- ADDED
+    record_report_nonrep(&nonrep, &report, user.client_id().ok().map(|id| id.to_string()));
  
     subscription::notify(
         &*event_source,

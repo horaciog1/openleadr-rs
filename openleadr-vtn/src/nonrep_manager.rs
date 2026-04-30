@@ -1,17 +1,12 @@
 /// Non-repudiation session manager for the openleadr-rs VTN.
-///
-/// Maintains one `EvidenceGenerator` per active VEN session, keyed by `client_id`.
-/// All OpenADR messages that flow through the VTN — outgoing events (VTN→VEN)
-/// and incoming reports (VEN→VTN) — are recorded into the appropriate session.
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
-    time::SystemTime,
 };
 
 use nonrep::{
-    session::{Evidence, EvidenceGenerator},
-    signing::{KeyPair, MlDsa44Signer, MockSigner, Signer},
+    session::EvidenceGenerator,
+    signing::{MockSigner, Signer},
 };
 use rand::RngCore;
 use serde::Serialize;
@@ -22,20 +17,10 @@ use tracing::{debug, info, warn};
 // ---------------------------------------------------------------------------
 
 fn init_keypair() -> (Vec<u8>, Vec<u8>, &'static str) {
-    #[cfg(feature = "pqc")]
-    {
-        let signer = MlDsa44Signer;
-        let kp = signer.generate_keypair();
-        info!("nonrep: VTN key pair generated (ML-DSA-44)");
-        (kp.public_key, kp.secret_key, "ML-DSA-44")
-    }
-    #[cfg(not(feature = "pqc"))]
-    {
-        let signer = MockSigner::new();
-        let kp = signer.generate_keypair();
-        warn!("nonrep: using SHA3-512 mock signer — enable feature 'pqc' for production");
-        (kp.public_key, kp.secret_key, "SHA3-512-MOCK")
-    }
+    let signer = MockSigner::new();
+    let kp = signer.generate_keypair();
+    warn!("nonrep: using SHA3-512 mock signer — compile nonrep with feature 'pqc' for ML-DSA-44");
+    (kp.public_key, kp.secret_key, "SHA3-512-MOCK")
 }
 
 // ---------------------------------------------------------------------------
@@ -50,21 +35,30 @@ struct Session {
     record_count: usize,
 }
 
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("record_count", &self.record_count)
+            .finish()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Public session manager
 // ---------------------------------------------------------------------------
 
 /// HTTP response body for `GET /nonrep/sessions/{venID}/evidence`
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct EvidenceResponse {
     pub ven_id:      String,
-    pub session_key: String,           // base64
+    pub session_key: String,
     pub evidence:    serde_json::Value,
-    pub nonces:      Vec<String>,      // base64
-    pub payloads:    Vec<String>,      // base64
+    pub nonces:      Vec<String>,
+    pub payloads:    Vec<String>,
 }
 
+#[derive(Debug)]
 pub struct NonRepManager {
     sessions:   Mutex<HashMap<String, Session>>,
     public_key: Vec<u8>,
@@ -96,16 +90,12 @@ impl NonRepManager {
         self.sessions.lock().unwrap().contains_key(ven_id)
     }
 
-    // ------------------------------------------------------------------
-    // Record a message
-    // ------------------------------------------------------------------
-
     pub fn record_message(&self, ven_id: &str, payload: &[u8], is_generator: bool) {
         let mut sessions = self.sessions.lock().unwrap();
 
         if !sessions.contains_key(ven_id) {
             let mut session_key = vec![0u8; 32];
-            rand::thread_rng().fill_bytes(&mut session_key);
+            rand::rng().fill_bytes(&mut session_key);
 
             let gen = EvidenceGenerator::new(
                 session_key.clone(),
@@ -129,7 +119,7 @@ impl NonRepManager {
 
         let session = sessions.get_mut(ven_id).unwrap();
         let mut nonce = vec![0u8; 16];
-        rand::thread_rng().fill_bytes(&mut nonce);
+        rand::rng().fill_bytes(&mut nonce);
 
         session.generator.add_record(payload, &nonce, is_generator);
         session.nonces.push(nonce);
@@ -139,10 +129,6 @@ impl NonRepManager {
         let direction = if is_generator { "VTN→VEN" } else { "VEN→VTN" };
         debug!(ven_id, record = session.record_count, direction, bytes = payload.len(), "nonrep: recorded");
     }
-
-    // ------------------------------------------------------------------
-    // Finalise a session
-    // ------------------------------------------------------------------
 
     pub fn finalize_session(&self, ven_id: &str) -> Result<EvidenceResponse, String> {
         use base64::{engine::general_purpose::STANDARD, Engine};
@@ -159,8 +145,7 @@ impl NonRepManager {
 
         info!(ven_id, records = session.record_count, "nonrep: session finalised");
 
-        let ev_json = serde_json::to_value(&evidence)
-            .map_err(|e| e.to_string())?;
+        let ev_json = serde_json::to_value(&evidence).map_err(|e| e.to_string())?;
 
         Ok(EvidenceResponse {
             ven_id:      ven_id.to_string(),
@@ -169,17 +154,5 @@ impl NonRepManager {
             nonces:      session.nonces.iter().map(|n| STANDARD.encode(n)).collect(),
             payloads:    session.payloads.iter().map(|p| STANDARD.encode(p)).collect(),
         })
-    }
-}
-
-impl Default for NonRepManager {
-    fn default() -> Self {
-        let (pk, sk, alg) = init_keypair();
-        Self {
-            sessions:   Mutex::new(HashMap::new()),
-            public_key: pk,
-            secret_key: sk,
-            alg_name:   alg,
-        }
     }
 }

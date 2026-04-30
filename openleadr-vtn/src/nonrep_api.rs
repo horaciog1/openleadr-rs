@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -50,7 +49,6 @@ pub async fn get_evidence(
     Path(ven_id): Path<String>,
     User(user): User,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // Only the authenticated VEN (or a BL client) may request evidence
     if !user.scope.contains(Scope::ReadAll)
         && !user.scope.contains(Scope::ReadVenObjects)
         && !user.scope.contains(Scope::ReadTargets)
@@ -64,11 +62,12 @@ pub async fn get_evidence(
 
     let response = nonrep
         .finalize_session(&ven_id)
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(|_| AppError::NotFound)?;
 
     info!(ven_id, "nonrep: evidence returned");
 
-    Ok(Json(serde_json::to_value(response).unwrap()))
+    Ok(Json(serde_json::to_value(response)
+        .map_err(AppError::SerdeJsonInternalServerError)?))
 }
 
 // ---------------------------------------------------------------------------
@@ -93,16 +92,15 @@ pub async fn verify_proof(
     User(user): User,
     Json(body): Json<ProofBody>,
 ) -> Result<Json<VerifyResponse>, AppError> {
-    use base64::{engine::general_purpose::STANDARD, Engine};
     use nonrep::{
-        session::{ChunkEntry, Evidence, Proof, ProofRecord, RecordPrivacy},
+        session::{Evidence, Proof, ProofRecord},
         signing::MockSigner,
         Verifier,
     };
 
     // Deserialise evidence
-    let ev: Evidence = serde_json::from_value(body.evidence.clone())
-        .map_err(|e| AppError::BadRequest(format!("Failed to deserialise evidence: {e}")))?;
+    let ev: Evidence = serde_json::from_value(body.evidence)
+        .map_err(AppError::SerdeJsonBadRequest)?;
 
     // Identity binding — proof must belong to the authenticated VEN
     if !ev.ven_id.is_empty() && ev.ven_id != ven_id {
@@ -111,7 +109,7 @@ pub async fn verify_proof(
 
     // Deserialise proof records
     let records: Vec<ProofRecord> = serde_json::from_value(body.records)
-        .map_err(|e| AppError::BadRequest(format!("Failed to deserialise records: {e}")))?;
+        .map_err(AppError::SerdeJsonBadRequest)?;
 
     let proof = Proof { evidence: ev, records };
 
