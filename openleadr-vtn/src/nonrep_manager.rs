@@ -8,7 +8,7 @@ use nonrep::{
     session::EvidenceGenerator,
     signing::{MockSigner, Signer},
 };
-use rand::RngCore;
+use rand::Rng;
 use serde::Serialize;
 use tracing::{debug, info, warn};
 
