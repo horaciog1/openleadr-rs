@@ -1,3 +1,4 @@
+use crate::nonrep_manager::NonRepManager;
 use std::sync::Arc;
 
 use axum::{
@@ -25,6 +26,28 @@ use crate::{
     error::AppError,
     jwt::{Scope, User},
 };
+
+/// Serialise the event to JSON bytes and record it in the non-rep chain
+/// for every VEN that is targeted by this event.
+///
+/// Events have a 'targets' field (Vec<Target>) where each Target is a
+/// string value used as a VEN client_id. We record the event into the
+/// chain for each such ven_id.
+fn record_event_nonrep(nonrep: &NonRepManager, event: &Event) {
+    let payload = match serde_json::to_vec(event) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("nonrep: failed to serialise event: {}", e);
+            return;
+        }
+    };
+ 
+    for target in &event.content.targets {
+        // In openleadr-rs, Target is a string (the VEN client_id)
+        let ven_id = target.as_str();
+        nonrep.record_message(ven_id, &payload, true);  // true = VTN is generator
+    }
+}
 
 pub async fn get_all(
     State(event_source): State<Arc<dyn EventCrud>>,
@@ -71,19 +94,23 @@ pub async fn get(
 pub async fn add(
     State(event_source): State<Arc<dyn EventCrud>>,
     State(notifier_state): State<Arc<NotifierState>>,
+    State(nonrep): State<Arc<NonRepManager>>,    // <-- ADDED
     User(user): User,
     ValidatedJson(new_event): ValidatedJson<EventRequest>,
 ) -> Result<(StatusCode, Json<Event>), AppError> {
     if !user.scope.contains(Scope::WriteEvents) {
         return Err(AppError::Forbidden("Missing 'write_events' scope"));
     }
-
+ 
     let event = event_source
         .create(new_event, &Some(user.client_id()?))
         .await?;
-
+ 
     info!(%event.id, event_name=event.content.event_name, client_id = user.sub, "event created");
-
+ 
+    // Record into every targeted VEN's non-rep chain
+    record_event_nonrep(&nonrep, &event);                    // <-- ADDED
+ 
     subscription::notify(
         &*event_source,
         &notifier_state,
@@ -91,13 +118,14 @@ pub async fn add(
         AnyObject::Event(event.clone()),
     )
     .await;
-
+ 
     Ok((StatusCode::CREATED, Json(event)))
 }
 
 pub async fn edit(
     State(event_source): State<Arc<dyn EventCrud>>,
     State(notifier_state): State<Arc<NotifierState>>,
+    State(nonrep): State<Arc<NonRepManager>>,    // <-- ADDED
     Path(id): Path<EventId>,
     User(user): User,
     ValidatedJson(content): ValidatedJson<EventRequest>,
@@ -105,13 +133,16 @@ pub async fn edit(
     if !user.scope.contains(Scope::WriteEvents) {
         return Err(AppError::Forbidden("Missing 'write_events' scope"));
     }
-
+ 
     let event = event_source
         .update(&id, content, &Some(user.client_id()?))
         .await?;
-
+ 
     info!(%event.id, event_name=event.content.event_name, client_id = user.sub, "event updated");
-
+ 
+    // Record into every targeted VEN's non-rep chain
+    record_event_nonrep(&nonrep, &event);                    // <-- ADDED
+ 
     subscription::notify(
         &*event_source,
         &notifier_state,
@@ -119,7 +150,7 @@ pub async fn edit(
         AnyObject::Event(event.clone()),
     )
     .await;
-
+ 
     Ok(Json(event))
 }
 

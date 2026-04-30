@@ -1,3 +1,4 @@
+use crate::nonrep_manager::NonRepManager;
 use std::sync::Arc;
 
 use axum::{
@@ -23,6 +24,31 @@ use crate::{
     error::AppError,
     jwt::{Scope, User},
 };
+
+/// Serialise the report to JSON bytes and record it in the VEN's non-rep chain.
+/// Reports are sent by the VEN, so is_generator = false.
+fn record_report_nonrep(nonrep: &NonRepManager, report: &Report, ven_id: Option<&str>) {
+    let ven_id = match ven_id.or_else(|| {
+        // Fall back to client_name if client_id not available
+        report.content.client_name.as_deref()
+    }) {
+        Some(id) => id,
+        None => {
+            tracing::warn!("nonrep: cannot record report — no ven_id available");
+            return;
+        }
+    };
+ 
+    let payload = match serde_json::to_vec(report) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("nonrep: failed to serialise report: {}", e);
+            return;
+        }
+    };
+ 
+    nonrep.record_message(ven_id, &payload, false);  // false = VEN is generator
+}
 
 #[instrument(skip(user, report_source))]
 pub async fn get_all(
@@ -75,6 +101,7 @@ pub async fn add(
     State(event_source): State<Arc<dyn EventCrud>>,
     State(report_source): State<Arc<dyn ReportCrud>>,
     State(notifier_state): State<Arc<NotifierState>>,
+    State(nonrep): State<Arc<NonRepManager>>,    // <-- ADDED
     User(user): User,
     ValidatedJson(new_report): ValidatedJson<ReportRequest>,
 ) -> Result<(StatusCode, Json<Report>), AppError> {
@@ -85,9 +112,12 @@ pub async fn add(
     } else {
         return Err(AppError::Forbidden("Missing 'write_reports' scope"));
     };
-
+ 
     info!(%report.id, report_name=?report.content.report_name, client_id = user.sub, "report created");
-
+ 
+    // Record into the submitting VEN's non-rep chain (VEN is generator)
+    record_report_nonrep(&nonrep, &report, user.client_id().ok().as_deref()); // <-- ADDED
+ 
     subscription::notify(
         &*event_source,
         &notifier_state,
@@ -95,7 +125,7 @@ pub async fn add(
         AnyObject::Report(report.clone()),
     )
     .await;
-
+ 
     Ok((StatusCode::CREATED, Json(report)))
 }
 
@@ -104,6 +134,7 @@ pub async fn edit(
     State(event_source): State<Arc<dyn EventCrud>>,
     State(report_source): State<Arc<dyn ReportCrud>>,
     State(notifier_state): State<Arc<NotifierState>>,
+    State(nonrep): State<Arc<NonRepManager>>,    // <-- ADDED
     Path(id): Path<ReportId>,
     User(user): User,
     ValidatedJson(content): ValidatedJson<ReportRequest>,
@@ -115,9 +146,12 @@ pub async fn edit(
     } else {
         return Err(AppError::Forbidden("Missing 'write_reports' scope"));
     };
-
+ 
     info!(%report.id, report_name=?report.content.report_name, client_id = user.sub, "report updated");
-
+ 
+    // Record into the submitting VEN's non-rep chain
+    record_report_nonrep(&nonrep, &report, user.client_id().ok().as_deref()); // <-- ADDED
+ 
     subscription::notify(
         &*event_source,
         &notifier_state,
@@ -125,7 +159,7 @@ pub async fn edit(
         AnyObject::Report(report.clone()),
     )
     .await;
-
+ 
     Ok(Json(report))
 }
 

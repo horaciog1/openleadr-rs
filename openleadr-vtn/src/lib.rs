@@ -7,6 +7,8 @@ mod error;
 pub mod jwt;
 #[cfg(feature = "mdns")]
 pub mod mdns;
+pub mod nonrep_manager;
+pub mod nonrep_api;
 pub mod state;
 
 #[cfg(feature = "postgres")]

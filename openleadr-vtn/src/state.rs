@@ -1,6 +1,7 @@
 #[cfg(feature = "internal-oauth")]
 use crate::api::auth;
 use crate::data_source::SubscriptionCrud;
+use crate::nonrep_manager::NonRepManager;
 #[cfg(feature = "internal-oauth")]
 use crate::{api::user, data_source::AuthSource};
 #[cfg(feature = "internal-oauth")]
@@ -46,9 +47,10 @@ use tracing::info;
 
 #[derive(Clone, FromRef)]
 pub struct AppState {
-    pub storage: Arc<dyn DataSource>,
+    pub storage:     Arc<dyn DataSource>,
     pub jwt_manager: Arc<JwtManager>,
     pub(crate) notifier: Arc<subscription::NotifierState>,
+    pub nonrep:      Arc<NonRepManager>,
 }
 
 #[derive(Debug, Default, Copy, Clone)]
@@ -291,10 +293,13 @@ impl AppState {
             .await
             .expect("failed to retrieve subscriptions from database");
 
+        let nonrep = crate::nonrep_manager::NonRepManager::new();
+
         Self {
             storage: Arc::new(storage),
             jwt_manager: Arc::new(jwt_manager),
             notifier: Arc::new(notifier),
+            nonrep,
         }
     }
 
@@ -340,7 +345,10 @@ impl AppState {
                     .delete(subscription::delete),
             )
             .route("/auth/server", get(auth_server_handler))
-            .route("/notifiers", get(subscription::notifier_get));
+            .route("/notifiers", get(subscription::notifier_get))
+            .route("/nonrep/public-key", get(crate::nonrep_api::get_public_key))
+            .route("/nonrep/sessions/:ven_id/evidence", get(crate::nonrep_api::get_evidence))
+            .route("/nonrep/sessions/:ven_id/verify", axum::routing::post(crate::nonrep_api::verify_proof));
         #[cfg(feature = "experimental-websockets")]
         {
             router = router.route("/notifiers/ws", get(subscription::notifier_websocket_get));
@@ -439,6 +447,12 @@ impl FromRef<AppState> for Arc<dyn ResourceCrud> {
 impl FromRef<AppState> for Arc<dyn SubscriptionCrud> {
     fn from_ref(state: &AppState) -> Self {
         state.storage.subscriptions()
+    }
+}
+
+impl FromRef<AppState> for Arc<NonRepManager> {
+    fn from_ref(state: &AppState) -> Arc<NonRepManager> {
+        state.nonrep.clone()
     }
 }
 
