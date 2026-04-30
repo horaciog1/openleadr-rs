@@ -89,7 +89,7 @@ pub struct VerifyResponse {
 
 pub async fn verify_proof(
     Path(ven_id): Path<String>,
-    User(user): User,
+    User(_user): User,
     Json(body): Json<ProofBody>,
 ) -> Result<Json<VerifyResponse>, AppError> {
     use nonrep::{
