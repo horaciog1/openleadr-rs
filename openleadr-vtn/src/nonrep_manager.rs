@@ -4,23 +4,41 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[cfg(not(feature = "pqc"))]
+use nonrep::signing::MockSigner;
+#[cfg(feature = "pqc")]
+use nonrep::signing::MlDsa44Signer;
 use nonrep::{
     session::EvidenceGenerator,
-    signing::{MockSigner, Signer},
+    signing::Signer,
 };
 use rand::Rng;
 use serde::Serialize;
 use tracing::{debug, info, warn};
+
+#[cfg(not(feature = "pqc"))]
+type ActiveSigner = MockSigner;
+#[cfg(feature = "pqc")]
+type ActiveSigner = MlDsa44Signer;
 
 // ---------------------------------------------------------------------------
 // VTN key pair — generated once at startup, shared across all sessions
 // ---------------------------------------------------------------------------
 
 fn init_keypair() -> (Vec<u8>, Vec<u8>, &'static str) {
-    let signer = MockSigner::new();
+    #[cfg(not(feature = "pqc"))]
+    let signer = ActiveSigner::new();
+    #[cfg(feature = "pqc")]
+    let signer = ActiveSigner;
+
     let kp = signer.generate_keypair();
+
+    #[cfg(not(feature = "pqc"))]
     warn!("nonrep: using SHA3-512 mock signer — compile nonrep with feature 'pqc' for ML-DSA-44");
-    (kp.public_key, kp.secret_key, "SHA3-512-MOCK")
+    #[cfg(feature = "pqc")]
+    info!("nonrep: using ML-DSA-44 (NIST FIPS 204) post-quantum signer");
+
+    (kp.public_key, kp.secret_key, signer.algorithm_name())
 }
 
 // ---------------------------------------------------------------------------
@@ -28,7 +46,7 @@ fn init_keypair() -> (Vec<u8>, Vec<u8>, &'static str) {
 // ---------------------------------------------------------------------------
 
 struct Session {
-    generator:    EvidenceGenerator<MockSigner>,
+    generator:    EvidenceGenerator<ActiveSigner>,
     session_key:  Vec<u8>,
     nonces:       Vec<Vec<u8>>,
     payloads:     Vec<Vec<u8>>,
@@ -97,13 +115,18 @@ impl NonRepManager {
             let mut session_key = vec![0u8; 32];
             rand::rng().fill_bytes(&mut session_key);
 
+            #[cfg(not(feature = "pqc"))]
+            let active_signer = ActiveSigner::new();
+            #[cfg(feature = "pqc")]
+            let active_signer = ActiveSigner;
+
             let gen = EvidenceGenerator::new(
                 session_key.clone(),
                 self.public_key.clone(),
                 self.secret_key.clone(),
                 16,
                 32,
-                MockSigner::new(),
+                active_signer,
             );
 
             sessions.insert(ven_id.to_string(), Session {
