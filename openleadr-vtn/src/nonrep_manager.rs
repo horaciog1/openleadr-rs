@@ -14,7 +14,7 @@ use nonrep::{
 };
 use rand::Rng;
 use serde::Serialize;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 #[cfg(not(feature = "pqc"))]
 type ActiveSigner = MockSigner;
@@ -27,10 +27,9 @@ type ActiveSigner = MlDsa44Signer;
 
 fn init_keypair() -> (Vec<u8>, Vec<u8>, &'static str) {
     #[cfg(not(feature = "pqc"))]
-    let signer = ActiveSigner::new();
+    let signer = MockSigner::new();
     #[cfg(feature = "pqc")]
-    let signer = ActiveSigner;
-
+    let signer = MlDsa44Signer;
     let kp = signer.generate_keypair();
 
     #[cfg(not(feature = "pqc"))]
@@ -116,9 +115,9 @@ impl NonRepManager {
             rand::rng().fill_bytes(&mut session_key);
 
             #[cfg(not(feature = "pqc"))]
-            let active_signer = ActiveSigner::new();
+            let active_signer = MockSigner::new();
             #[cfg(feature = "pqc")]
-            let active_signer = ActiveSigner;
+            let active_signer = MlDsa44Signer;
 
             let gen = EvidenceGenerator::new(
                 session_key.clone(),
