@@ -14,7 +14,7 @@ categories = ["web-programming"]
 
 [dependencies]
 openleadr-wire.workspace = true
-nonrep = { path = "../../nonrep-rs" }
+nonrep = { path = "../../nonrep-rs", features = ["pqc"] }
 
 serde.workspace = true
 serde_json.workspace = true
