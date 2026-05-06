@@ -13,7 +13,7 @@ wait_for_postgres() {
     echo "Waiting for PostgreSQL..."
 
     until docker compose exec -T "$DB_CONTAINER_NAME" pg_isready -U "$DB_USER" >/dev/null 2>&1; do
-        sleep 2
+        sleep 4
         echo "Still waiting..."
     done
 
