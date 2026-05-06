@@ -94,9 +94,12 @@ pub async fn verify_proof(
 ) -> Result<Json<VerifyResponse>, AppError> {
     use nonrep::{
         session::{Evidence, Proof, ProofRecord},
-        signing::MockSigner,
         Verifier,
     };
+    #[cfg(not(feature = "pqc"))]
+    use nonrep::signing::MockSigner;
+    #[cfg(feature = "pqc")]
+    use nonrep::signing::MlDsa44Signer;
 
     // Deserialise evidence
     let ev: Evidence = serde_json::from_value(body.evidence)
@@ -113,7 +116,10 @@ pub async fn verify_proof(
 
     let proof = Proof { evidence: ev, records };
 
+    #[cfg(not(feature = "pqc"))]
     let valid = Verifier::verify(&proof, &MockSigner::new(), None);
+    #[cfg(feature = "pqc")]
+    let valid = Verifier::verify(&proof, &MlDsa44Signer, None);
     info!(ven_id, valid, "nonrep: proof verified");
 
     Ok(Json(VerifyResponse { ven_id, valid }))
