@@ -12,12 +12,17 @@ FIXTURES_FILE="fixtures/users.sql"
 wait_for_postgres() {
     echo "Waiting for PostgreSQL..."
 
-    until docker compose exec -T "$DB_CONTAINER_NAME" pg_isready -U "$DB_USER" >/dev/null 2>&1; do
-        sleep 4
+    until PGPASSWORD="$DB_PASSWORD" psql \
+        -U "$DB_USER" \
+        -h "$DB_HOST" \
+        -d "$DB_NAME" \
+        -c "SELECT 1;" >/dev/null 2>&1; do
+
+        sleep 2
         echo "Still waiting..."
     done
 
-    echo "PostgreSQL is ready."
+    echo "PostgreSQL is fully ready."
 }
 
 echo "Bringing down containers and wiping volumes..."
