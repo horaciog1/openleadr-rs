@@ -124,3 +124,149 @@ docker compose up --force-recreate --build --no-deps vtn
 ```
 
 This will force a rebuild
+
+---
+
+## Post-Quantum Non-Repudiation (fork addition)
+
+This fork integrates the [`nonrep-rs`](https://github.com/horaciog1/nonrep-rs)
+library to add post-quantum non-repudiation to all VTN/VEN message exchanges.
+Every event dispatched by the VTN and every report submitted by a VEN is
+automatically recorded into a per-VEN hash chain signed with ML-DSA-44
+(NIST FIPS 204 / Dilithium3).
+
+### Dependency
+
+Add the following to `openleadr-vtn/Cargo.toml`:
+
+```toml
+[dependencies]
+nonrep = { path = "../nonrep-rs" }
+```
+
+Build with the real ML-DSA-44 signer (requires cmake + liboqs):
+
+```bash
+BINDGEN_EXTRA_CLANG_ARGS="-I/usr/lib/gcc/x86_64-linux-gnu/$(gcc -dumpversion)/include" \
+    cargo build --features pqc
+```
+
+Omit `--features pqc` to build with the mock SHA3-512 signer for development
+and testing.
+
+### New REST endpoints
+
+Three endpoints are added under `/nonrep`. They sit alongside the standard
+OpenADR routes and are served by the same VTN binary.
+
+#### `GET /nonrep/public-key`
+
+Returns the VTN's ML-DSA-44 public key. Any authenticated client may call this.
+
+**Response**
+
+```json
+{
+  "publicKey": "<base64-encoded ML-DSA-44 public key>",
+  "algorithm": "ML-DSA-44",
+  "encoding":  "base64"
+}
+```
+
+---
+
+#### `GET /nonrep/sessions/{venID}/evidence`
+
+Finalises the non-repudiation session for `{venID}` and returns the signed
+Evidence object together with the raw payloads and nonces needed to build a
+Proof. Requires `read_all`, `read_ven_objects`, or `read_targets` OAuth scope.
+
+`{venID}` is the VEN's OAuth `client_id`, not the OpenADR object ID.
+
+**Response**
+
+```json
+{
+  "sessionKey":  "<base64>",
+  "nonces":      ["<base64>", ...],
+  "payloads":    ["<base64>", ...],
+  "evidence": {
+    "venId":          "<ven_cid>",
+    "signingAlg":     "ML-DSA-44",
+    "hashChainFinal": "<base64>",
+    "signature":      "<base64>",
+    "publicKey":      "<base64>",
+    "orderingVector": [true, false, true, ...],
+    "timestampStart": "<ISO 8601>",
+    "timestampEnd":   "<ISO 8601>",
+    "recordCount":    5,
+    "chunkSize":      16,
+    "keyLen":         32
+  }
+}
+```
+
+The `orderingVector` indicates, per record, whether the VTN was the generator
+(`true` = event, VTN → VEN) or the VEN was the generator (`false` = report,
+VEN → VTN).
+
+---
+
+#### `POST /nonrep/sessions/{venID}/verify`
+
+Verifies a Proof submitted by the caller. Any authenticated client may call
+this. Returns HTTP 403 if the `ven_id` field inside the Evidence does not match
+the `{venID}` path parameter — this prevents cross-VEN proof substitution.
+
+**Request body**
+
+```json
+{
+  "evidence": { ... },
+  "records":  [ ... ]
+}
+```
+
+**Response**
+
+```json
+{
+  "venId": "<ven_cid>",
+  "valid": true
+}
+```
+
+---
+
+### Session key design
+
+Non-repudiation sessions are keyed by the VEN's OAuth `client_id` (`ven_cid`).
+This single value threads through all three integration points:
+
+| Integration point             | How `ven_cid` is resolved                                                                                                                                    |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Event hook (`api/event.rs`)   | Each `Target` string in the event's target list is treated as a VEN `client_id`; `record_event_nonrep` calls `nonrep.record_message(target, &payload, true)` |
+| Report hook (`api/report.rs`) | `user.client_id()` from the authenticated VEN token; `record_report_nonrep` calls `nonrep.record_message(&ven_id, &payload, false)`                          |
+| Evidence / verify endpoints   | `{venID}` path parameter must equal `ven_cid`                                                                                                                |
+
+This means events **must be targeted at the VEN's OAuth `client_id`**, not at
+the OpenADR object ID or VEN name. Reports are keyed automatically from the
+token, so no special handling is required on the VEN side.
+
+### Key files
+
+| File                    | Purpose                                                                   |
+| ----------------------- | ------------------------------------------------------------------------- |
+| `src/nonrep_manager.rs` | `NonRepManager` singleton; one `EvidenceGenerator` per active VEN session |
+| `src/nonrep_api.rs`     | Handler functions for the three REST endpoints                            |
+| `src/api/event.rs`      | `record_event_nonrep` hook called on every create/update                  |
+| `src/api/report.rs`     | `record_report_nonrep` hook called on every create/update                 |
+
+### End-to-end testing
+
+See `examples/e2e_live.rs` in the
+[nonrep-rs](https://github.com/horaciog1/nonrep-rs) repository for a
+self-contained demo that authenticates as both BL and VEN, exchanges real
+OpenADR messages, and then exercises the full non-repudiation workflow
+(evidence fetch → proof construction → local + server-side verification →
+tamper detection) against this VTN.

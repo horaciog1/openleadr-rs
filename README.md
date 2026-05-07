@@ -4,9 +4,62 @@
 ![codecov](https://codecov.io/gh/OpenLEADR/openleadr-rs/graph/badge.svg?token=BKQ0QW9G8H)
 [![Checks](https://github.com/OpenLEADR/openleadr-rs/actions/workflows/checks.yml/badge.svg)](https://github.com/OpenLEADR/openleadr-rs/actions/workflows/checks.yml)
 
-# OpenADR 3.1 in Rust
+# OpenADR 3.1 in Rust — Post-Quantum Non-Repudiation Fork
 
 ![LF energy OpenLEADR logo](https://github.com/OpenLEADR/openleadr-rs/raw/refs/heads/main/openleadr-logo.svg)
+
+> **This is a research fork** of [OpenLEADR/openleadr-rs](https://github.com/OpenLEADR/openleadr-rs)
+> It extends the upstream VTN with **post-quantum cryptography (ML-DSA-44 / NIST FIPS 204)** and a
+> **non-repudiation layer** for all VTN/VEN message exchanges, based on the
+> TLS-N protocol (Ritzdorf et al., NDSS 2018). The core library lives in the
+> companion repository [horaciog1/nonrep-rs](https://github.com/horaciog1/nonrep-rs).
+
+---
+
+## What this fork adds
+
+Every event dispatched by the VTN and every report submitted by a VEN is
+automatically recorded into a per-VEN, append-only hash chain. The chain is
+finalised into a signed Evidence object using ML-DSA-44. A VEN can later build
+a Proof from that Evidence and have it verified — locally or by the VTN —
+without the VTN being able to deny having issued any message.
+
+### New files in `openleadr-vtn/src/`
+
+| File                | Purpose                                                                   |
+| ------------------- | ------------------------------------------------------------------------- |
+| `nonrep_manager.rs` | `NonRepManager` singleton; one `EvidenceGenerator` per active VEN session |
+| `nonrep_api.rs`     | Three new REST endpoints (see below)                                      |
+| `api/event.rs`      | Added `record_event_nonrep` hook on every event create/update             |
+| `api/report.rs`     | Added `record_report_nonrep` hook on every report create/update           |
+
+### New REST endpoints
+
+```
+GET  /nonrep/public-key
+GET  /nonrep/sessions/{venID}/evidence
+POST /nonrep/sessions/{venID}/verify
+```
+
+`{venID}` is the VEN's OAuth `client_id`. See the
+[VTN README](./openleadr-vtn/README.md#post-quantum-non-repudiation-fork-addition)
+for full endpoint documentation, session key design, and build instructions.
+
+### Companion library
+
+The cryptographic core (hash tree, salt tree, Merkle commitments, ML-DSA-44
+signing, `EvidenceGenerator`, `ProofBuilder`, `Verifier`) is implemented as a
+standalone, reusable Rust library in
+[horaciog1/nonrep-rs](https://github.com/horaciog1/nonrep-rs).
+
+### End-to-end demo
+
+`examples/e2e_live.rs` in `nonrep-rs` demonstrates the full workflow against
+this VTN: authentication, event dispatch, report submission, evidence fetch,
+proof construction, local verification, server-side verification, and tamper
+detection.
+
+---
 
 OpenADR is a protocol for automated demand-response in electricity grids, like dynamic pricing or load shedding. The [OpenADR alliance](https://www.openadr.org/) is responsible for the standard, which can be [downloaded](https://www.openadr.org/specification) free of charge.
 
